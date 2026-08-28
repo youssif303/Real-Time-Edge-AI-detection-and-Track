@@ -113,6 +113,30 @@ def _extract_detections(result: Any) -> list[Detection]:
     return detections
 
 
+def _reencode_h264(path: Path) -> None:
+    """Re-encode an mp4v-encoded file to H.264 so browsers can play it."""
+    ffmpeg = get_ffmpeg_exe()
+    tmp = path.with_suffix(".h264.mp4")
+    try:
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-i", str(path),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-movflags", "+faststart",
+                "-an",
+                str(tmp),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        tmp.replace(path)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        # Keep the original mp4v file as fallback if ffmpeg fails.
+
+
 def process_video(
     video_path: Path,
     settings: ProcessingSettings,
@@ -196,6 +220,9 @@ def process_video(
 
         processing_time_ms = (perf_counter() - processing_started) * 1000.0
         measured_fps = len(frames) / (processing_time_ms / 1000.0) if processing_time_ms > 0.0 else 0.0
+
+        if output_path is not None and output_path.exists():
+            _reencode_h264(output_path)
 
         return ProcessingResponse(
             video_name=video_path.name,

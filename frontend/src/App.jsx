@@ -24,6 +24,8 @@ function App() {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
+  const [slowWarning, setSlowWarning] = useState(false);
+  const slowTimerRef = useRef(null);
 
   useEffect(() => {
     fetch(`${API_URL}/health`).then((response) => response.json()).then((payload) => {
@@ -32,6 +34,10 @@ function App() {
       if (!available) setDevice("cpu");
     }).catch(() => {});
   }, []);
+
+  const annotatedVideoUrl = result?.annotated_video_url
+    ? `${API_URL}${result.annotated_video_url}`
+    : null;
 
   const latest = result?.frames?.at(-1);
   const averageLatency = useMemo(() => {
@@ -47,6 +53,10 @@ function App() {
 
   function chooseFile(event) {
     const selected = event.target.files?.[0] || null;
+    if (selected && selected.size > 100 * 1024 * 1024) {
+      setError("File is too large (max 100 MB). Please trim the clip before uploading.");
+      return;
+    }
     setFile(selected);
     setResult(null);
     setError("");
@@ -56,6 +66,8 @@ function App() {
     if (!file) return;
     setStatus("processing");
     setError("");
+    setSlowWarning(false);
+    slowTimerRef.current = setTimeout(() => setSlowWarning(true), 25000);
     const body = new FormData();
     body.append("video", file);
     body.append("confidence_threshold", String(threshold));
@@ -66,21 +78,27 @@ function App() {
 
     try {
       const response = await fetch(`${API_URL}/api/v1/process`, { method: "POST", body });
+      clearTimeout(slowTimerRef.current);
+      setSlowWarning(false);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "The video could not be processed.");
       setResult(payload);
       setStatus("complete");
     } catch (requestError) {
+      clearTimeout(slowTimerRef.current);
+      setSlowWarning(false);
       setError(requestError.message);
       setStatus("error");
     }
   }
 
   function reset() {
+    clearTimeout(slowTimerRef.current);
     setFile(null);
     setResult(null);
     setError("");
     setStatus("idle");
+    setSlowWarning(false);
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -103,7 +121,7 @@ function App() {
       <section className="workspace">
         <div className="control-panel">
           <div className="section-heading"><span>01 / INPUT</span><span>MP4 Â· MOV Â· AVI</span></div>
-          <button className={`dropzone ${file ? "has-file" : ""}`} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const dropped = event.dataTransfer.files?.[0]; if (dropped?.type.startsWith("video/")) { setFile(dropped); setResult(null); setError(""); } }}>
+          <button className={`dropzone ${file ? "has-file" : ""}`} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()}           onDrop={(event) => { event.preventDefault(); const dropped = event.dataTransfer.files?.[0]; if (dropped?.type.startsWith("video/")) { if (dropped.size > 100 * 1024 * 1024) { setError("File is too large (max 100 MB). Please trim the clip before uploading."); return; } setFile(dropped); setResult(null); setError(""); } }}>
             <input ref={inputRef} type="file" accept="video/*" onChange={chooseFile} />
             <span className="upload-icon">â†‘</span>
             <strong>{file ? file.name : "Drop a video here"}</strong>
@@ -124,6 +142,7 @@ function App() {
             {status === "processing" ? "Processing frames..." : "Run perception pass â†—"}
           </button>
           {result && <button className="text-button" onClick={reset}>Reset workspace</button>}
+          {slowWarning && status === "processing" && <p className="error-message">⏳ Still processing — the server may be cold-starting or your video is long. Please wait.</p>}
           {error && <p className="error-message">{error}</p>}
         </div>
 
