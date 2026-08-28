@@ -63,6 +63,7 @@ def _cleanup_jobs() -> None:
     stale = [jid for jid, job in _jobs.items() if job.get("created_at", datetime.now(timezone.utc)) < cutoff]
     for jid in stale:
         del _jobs[jid]
+        (OUTPUT_DIR / f"{jid}.json").unlink(missing_ok=True)
 
 def cleanup_old_outputs() -> None:
     cutoff = datetime.now(timezone.utc) - OUTPUT_RETENTION
@@ -96,6 +97,7 @@ async def _run_job(
     original_filename: str,
 ) -> None:
     """Background task: run video processing and update job store."""
+    job_file = OUTPUT_DIR / f"{job_id}.json"
     _jobs[job_id]["status"] = "processing"
     try:
         result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_path)
@@ -103,14 +105,19 @@ async def _run_job(
             "video_name": original_filename,
             "annotated_video_url": f"/media/{output_path.name}",
         })
-        _jobs[job_id]["status"] = "complete"
-        _jobs[job_id]["result"] = payload.model_dump()
+        finished = {"status": "complete", "result": payload.model_dump(), "error": None}
+        _jobs[job_id].update(finished)
+        # Persist to disk so result survives a server restart during polling.
+        import json as _json
+        job_file.write_text(_json.dumps(finished))
     except ValueError as exc:
-        _jobs[job_id]["status"] = "error"
-        _jobs[job_id]["error"] = str(exc)
+        err = {"status": "error", "result": None, "error": str(exc)}
+        _jobs[job_id].update(err)
+        job_file.write_text(__import__("json").dumps(err))
     except Exception as exc:
-        _jobs[job_id]["status"] = "error"
-        _jobs[job_id]["error"] = f"Video processing failed: {exc}"
+        err = {"status": "error", "result": None, "error": f"Video processing failed: {exc}"}
+        _jobs[job_id].update(err)
+        job_file.write_text(__import__("json").dumps(err))
     finally:
         temp_path.unlink(missing_ok=True)
         _cleanup_jobs()
@@ -124,7 +131,7 @@ async def submit_video(
     model_name: str = Form("yolov8n.pt"),
     device: str = Form("cpu"),
     max_fps: int | None = Form(None, ge=1),
-    image_size: int = Form(640, ge=320, le=1280),
+    image_size: int = Form(416, ge=320, le=1280),
 ) -> dict:
     """Accept a video upload and start async processing. Returns a job_id to poll."""
     suffix = Path(video.filename or "upload.mp4").suffix or ".mp4"
@@ -166,6 +173,16 @@ async def submit_video(
 async def get_job_status(job_id: str) -> dict:
     """Poll the status of a submitted processing job."""
     job = _jobs.get(job_id)
+    if job is None:
+        # Check disk — covers the case where the server restarted after processing finished.
+        import json as _json
+        job_file = OUTPUT_DIR / f"{job_id}.json"
+        if job_file.exists():
+            try:
+                job = _json.loads(job_file.read_text())
+                _jobs[job_id] = job  # Reload into memory
+            except Exception:
+                pass
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
     return {

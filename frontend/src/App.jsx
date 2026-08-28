@@ -106,9 +106,21 @@ function App() {
     setStatus("queued");
 
     // Poll for job completion
+    let notFoundCount = 0;
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${API_URL}/api/v1/jobs/${jobId}`);
+        if (res.status === 404) {
+          notFoundCount++;
+          // After 3 consecutive 404s (15s), the job was likely lost to a server restart
+          if (notFoundCount >= 3) {
+            stopPolling();
+            setError("The server restarted during processing — please try again with a shorter clip or lower FPS cap.");
+            setStatus("error");
+          }
+          return;
+        }
+        notFoundCount = 0;
         const job = await res.json();
         if (job.status === "processing") {
           setStatus("processing");
