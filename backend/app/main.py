@@ -99,9 +99,10 @@ async def _run_job(
     _jobs[job_id]["status"] = "processing"
     try:
         result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_path)
+        video_url = f"/media/{output_path.name}" if output_path.exists() and output_path.stat().st_size > 0 else None
         payload = result.model_copy(update={
             "video_name": original_filename,
-            "annotated_video_url": f"/media/{output_path.name}",
+            "annotated_video_url": video_url,
         })
         finished = {"status": "complete", "result": payload.model_dump(), "error": None}
         _jobs[job_id].update(finished)
