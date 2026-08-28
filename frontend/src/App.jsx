@@ -42,6 +42,9 @@ function App() {
   const annotatedVideoUrl = result?.annotated_video_url
     ? `${API_URL}${result.annotated_video_url}`
     : null;
+  const previewImageUrl = result?.preview_image_url
+    ? `${API_URL}${result.preview_image_url}`
+    : null;
 
   const latest = result?.frames?.at(-1);
   const averageLatency = useMemo(() => {
@@ -209,6 +212,7 @@ function App() {
             <>
               <div className="result-header"><div><p className="eyebrow">PROCESSED VIDEO</p><h2>{result.video_name}</h2></div><span className="complete-mark">✓</span></div>
               {annotatedVideoUrl && <div className="video-preview"><video controls src={annotatedVideoUrl} /></div>}
+              {!annotatedVideoUrl && previewImageUrl && <div className="video-preview"><img src={previewImageUrl} alt="Last annotated frame" style={{width:"100%",borderRadius:"6px"}} /></div>}
               <div className="metrics-grid">
                 <Metric label="Objects / latest" value={latest?.detections?.length ?? 0} detail="visible detections" />
                 <Metric label="Active tracks" value={latest?.active_track_count ?? 0} detail="stable identities" />

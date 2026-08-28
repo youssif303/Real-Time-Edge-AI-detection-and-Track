@@ -65,7 +65,7 @@ def _cleanup_jobs() -> None:
 
 def cleanup_old_outputs() -> None:
     cutoff = datetime.now(timezone.utc) - OUTPUT_RETENTION
-    for output_path in OUTPUT_DIR.glob("*.mp4"):
+    for output_path in list(OUTPUT_DIR.glob("*.jpg")) + list(OUTPUT_DIR.glob("*.json")):
         modified = datetime.fromtimestamp(output_path.stat().st_mtime, tz=timezone.utc)
         if modified < cutoff:
             output_path.unlink(missing_ok=True)
@@ -91,19 +91,15 @@ async def _run_job(
     job_id: str,
     temp_path: Path,
     settings: ProcessingSettings,
-    output_path: Path,
+    output_stem: Path,
     original_filename: str,
 ) -> None:
     """Background task: run video processing and update job store."""
     job_file = OUTPUT_DIR / f"{job_id}.json"
     _jobs[job_id]["status"] = "processing"
     try:
-        result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_path)
-        video_url = f"/media/{output_path.name}" if output_path.exists() and output_path.stat().st_size > 0 else None
-        payload = result.model_copy(update={
-            "video_name": original_filename,
-            "annotated_video_url": video_url,
-        })
+        result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_stem)
+        payload = result.model_copy(update={"video_name": original_filename})
         finished = {"status": "complete", "result": payload.model_dump(), "error": None}
         _jobs[job_id].update(finished)
         # Persist to disk so result survives a server restart during polling.
@@ -134,7 +130,8 @@ async def submit_video(
 ) -> dict:
     """Accept a video upload and start async processing. Returns a job_id to poll."""
     suffix = Path(video.filename or "upload.mp4").suffix or ".mp4"
-    output_path = OUTPUT_DIR / f"{uuid4().hex}.mp4"
+    # output_path stem is reused for the JPEG preview ({stem}.jpg)
+    output_stem = OUTPUT_DIR / uuid4().hex
 
     with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_file.write(await video.read())
@@ -163,7 +160,7 @@ async def submit_video(
         "error": None,
     }
     background_tasks.add_task(
-        _run_job, job_id, temp_path, settings, output_path, video.filename or temp_path.name
+        _run_job, job_id, temp_path, settings, output_stem, video.filename or temp_path.name
     )
     return {"job_id": job_id}
 

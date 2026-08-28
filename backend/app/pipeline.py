@@ -47,6 +47,7 @@ class ProcessingResponse(BaseModel):
     processing_time_ms: float | None = None
     measured_fps: float | None = None
     annotated_video_url: str | None = None
+    preview_image_url: str | None = None
     frames: list[FrameSummary]
 
 
@@ -136,8 +137,8 @@ def process_video(
             model = load_yolo_model(settings.model_name)
 
         frames: list[FrameSummary] = []
-        writer: Any | None = None
         raw_frame_index = 0
+        last_annotated: bytes | None = None  # JPEG-encoded last annotated frame
         # Hard cap: on the free tier (0.1 vCPU / 512 MB) each frame takes 1–2 s.
         # 15 frames × 2 s = 30 s max — stays well within the server's compute budget.
         MAX_FRAMES = 15
@@ -169,30 +170,12 @@ def process_video(
             result = results[0] if isinstance(results, list) and results else results
             detections = _extract_detections(result)
             if output_path is not None:
+                # Save as JPEG — no VideoWriter buffer, no codec encoding overhead.
                 annotated_frame = result.plot() if hasattr(result, "plot") else frame
-                if writer is None:
-                    height, width = annotated_frame.shape[:2]
-                    output_fps = effective_max_fps or source_fps or 30.0
-                    # Try H264 (avc1) first — browser-compatible, in-process, no ffmpeg subprocess.
-                    writer = cv2.VideoWriter(
-                        str(output_path),
-                        cv2.VideoWriter_fourcc(*"avc1"),
-                        output_fps,
-                        (width, height),
-                    )
-                    if not writer.isOpened():
-                        # Fall back to mp4v if libx264 is unavailable on this platform.
-                        writer = cv2.VideoWriter(
-                            str(output_path),
-                            cv2.VideoWriter_fourcc(*"mp4v"),
-                            output_fps,
-                            (width, height),
-                        )
-                    if not writer.isOpened():
-                        writer = None  # Skip video output rather than crashing.
-                if writer is not None:
-                    writer.write(annotated_frame)
-                del annotated_frame
+                ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ok_jpg:
+                    last_annotated = jpg_buf.tobytes()
+                del annotated_frame, jpg_buf
             del results, result
             gc.collect()
             active_track_count = len({det.track_id for det in detections if det.track_id is not None})
@@ -216,6 +199,12 @@ def process_video(
         processing_time_ms = (perf_counter() - processing_started) * 1000.0
         measured_fps = len(frames) / (processing_time_ms / 1000.0) if processing_time_ms > 0.0 else 0.0
 
+        # Write the last annotated frame as a JPEG preview (no VideoWriter buffer needed).
+        preview_path: Path | None = None
+        if output_path is not None and last_annotated is not None:
+            preview_path = output_path.with_suffix(".jpg")
+            preview_path.write_bytes(last_annotated)
+        last_annotated = None  # Release memory
 
         return ProcessingResponse(
             video_name=video_path.name,
@@ -227,9 +216,8 @@ def process_video(
             processed_frame_count=len(frames),
             processing_time_ms=processing_time_ms,
             measured_fps=measured_fps,
+            preview_image_url=f"/media/{preview_path.name}" if preview_path else None,
             frames=frames,
         )
     finally:
-        if writer is not None:
-            writer.release()
         capture.release()
