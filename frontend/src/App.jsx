@@ -21,7 +21,7 @@ function App() {
   const [modelName, setModelName] = useState("yolov8n.pt");
   const [device, setDevice] = useState("cpu");
   const [gpuAvailable, setGpuAvailable] = useState(true);
-  const [maxFps, setMaxFps] = useState(5);
+  const [maxFps, setMaxFps] = useState(1);
   const [imageSize, setImageSize] = useState(320);
   const [result, setResult] = useState(null);
   // status: "idle" | "uploading" | "queued" | "processing" | "complete" | "error"
@@ -178,7 +178,7 @@ function App() {
       <section className="workspace">
         <div className="control-panel">
           <div className="section-heading"><span>01 / INPUT</span><span>MP4 · MOV · AVI</span></div>
-          <p className="muted" style={{fontSize:"0.75rem",marginBottom:"0.5rem"}}>⚡ Free-tier demo — processes up to 15 frames. Use a short clip (under 30s) for best results.</p>
+          <p className="muted" style={{fontSize:"0.75rem",marginBottom:"0.5rem"}}>⚡ Free-tier demo — processes up to 5 sample frames (~3 min). For faster results, use a short clip (≤15s) and keep FPS cap at 1.</p>
           <button className={`dropzone ${file ? "has-file" : ""}`} onClick={() => inputRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const dropped = e.dataTransfer.files?.[0]; if (dropped?.type.startsWith("video/")) { if (dropped.size > 100 * 1024 * 1024) { setError("File is too large (max 100 MB)."); return; } setFile(dropped); setResult(null); setError(""); } }}>
             <input ref={inputRef} type="file" accept="video/*" onChange={chooseFile} />
             <span className="upload-icon">↑</span>
@@ -187,7 +187,7 @@ function App() {
           </button>
           <div className="settings-grid">
             <label>Model<select value={modelName} onChange={(e) => setModelName(e.target.value)} disabled={isProcessing}><option value="yolov8n.pt">YOLOv8 nano</option><option value="yolov8s.pt">YOLOv8 small</option></select></label>
-            <label>Inference size<select value={imageSize} onChange={(e) => setImageSize(Number(e.target.value))} disabled={isProcessing}><option value="416">416 px · faster</option><option value="640">640 px · balanced</option><option value="960">960 px · detailed</option></select></label>
+            <label>Inference size<select value={imageSize} onChange={(e) => setImageSize(Number(e.target.value))} disabled={isProcessing}><option value="320">320 px · fastest</option><option value="640">640 px · balanced</option><option value="960">960 px · detailed</option></select></label>
             <label>Device<select value={device} onChange={(e) => setDevice(e.target.value)} disabled={isProcessing}><option value="cpu">CPU</option><option value="0" disabled={!gpuAvailable}>GPU 0{gpuAvailable ? "" : " (unavailable)"}</option></select></label>
           </div>
           <div className="setting-row"><label htmlFor="max-fps">Processing cap</label><output>{maxFps} FPS</output></div>

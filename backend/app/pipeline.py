@@ -141,7 +141,7 @@ def process_video(
         last_annotated: bytes | None = None  # JPEG-encoded last annotated frame
         # Hard cap: on the free tier (0.1 vCPU / 512 MB) each frame takes 1–2 s.
         # 15 frames × 2 s = 30 s max — stays well within the server's compute budget.
-        MAX_FRAMES = 15
+        MAX_FRAMES = 5
 
         while True:
             ok, frame = capture.read()
