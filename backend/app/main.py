@@ -1,31 +1,50 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import os
-from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 from backend.app.pipeline import (
-    ProcessingResponse,
     ProcessingSettings,
+    load_yolo_model,
     process_video,
 )
 
 
 APP_VERSION = "0.1.0"
 
+# In-memory job store: job_id -> {status, result, error, created_at}
+_jobs: dict[str, dict] = {}
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
+OUTPUT_RETENTION = timedelta(hours=2)
+JOB_RETENTION = timedelta(hours=2)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Pre-load default YOLO models at startup so the first request is fast."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for model_name in ("yolov8n.pt", "yolov8s.pt"):
+        try:
+            await run_in_threadpool(load_yolo_model, model_name)
+        except Exception:
+            pass  # Non-fatal: model will download on first use if this fails.
+    yield
+    # Nothing to tear down.
+
+
 app = FastAPI(
     title="EdgeTrack API",
     description="Real-time object detection and tracking service.",
     version=APP_VERSION,
+    lifespan=lifespan,
 )
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
-OUTPUT_RETENTION = timedelta(hours=2)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=OUTPUT_DIR), name="media")
 configured_origins = [origin.strip() for origin in os.getenv("EDGETRACK_CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()]
@@ -39,13 +58,11 @@ app.add_middleware(
 )
 
 
-@lru_cache(maxsize=1)
-def cuda_available() -> bool:
-    try:
-        import torch
-        return bool(torch.cuda.is_available())
-    except (ImportError, RuntimeError):
-        return False
+def _cleanup_jobs() -> None:
+    cutoff = datetime.now(timezone.utc) - JOB_RETENTION
+    stale = [jid for jid, job in _jobs.items() if job.get("created_at", datetime.now(timezone.utc)) < cutoff]
+    for jid in stale:
+        del _jobs[jid]
 
 def cleanup_old_outputs() -> None:
     cutoff = datetime.now(timezone.utc) - OUTPUT_RETENTION
@@ -58,60 +75,103 @@ def cleanup_old_outputs() -> None:
 @app.get("/health", tags=["system"])
 def health_check() -> dict[str, object]:
     """Report whether the API process is available."""
+    try:
+        import torch
+        cuda = bool(torch.cuda.is_available())
+    except (ImportError, RuntimeError):
+        cuda = False
     return {
         "status": "ok",
         "service": "edgetrack-api",
         "version": APP_VERSION,
-        "capabilities": {"cpu": True, "cuda": cuda_available()},
+        "capabilities": {"cpu": True, "cuda": cuda},
     }
 
 
-@app.post("/api/v1/process", response_model=ProcessingResponse, tags=["perception"])
-async def process_video_endpoint(
+async def _run_job(
+    job_id: str,
+    temp_path: Path,
+    settings: ProcessingSettings,
+    output_path: Path,
+    original_filename: str,
+) -> None:
+    """Background task: run video processing and update job store."""
+    _jobs[job_id]["status"] = "processing"
+    try:
+        result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_path)
+        payload = result.model_copy(update={
+            "video_name": original_filename,
+            "annotated_video_url": f"/media/{output_path.name}",
+        })
+        _jobs[job_id]["status"] = "complete"
+        _jobs[job_id]["result"] = payload.model_dump()
+    except ValueError as exc:
+        _jobs[job_id]["status"] = "error"
+        _jobs[job_id]["error"] = str(exc)
+    except Exception as exc:
+        _jobs[job_id]["status"] = "error"
+        _jobs[job_id]["error"] = f"Video processing failed: {exc}"
+    finally:
+        temp_path.unlink(missing_ok=True)
+        _cleanup_jobs()
+
+
+@app.post("/api/v1/process", status_code=status.HTTP_202_ACCEPTED, tags=["perception"])
+async def submit_video(
+    background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
     confidence_threshold: float = Form(0.25, ge=0.0, le=1.0),
     model_name: str = Form("yolov8n.pt"),
     device: str = Form("cpu"),
     max_fps: int | None = Form(None, ge=1),
     image_size: int = Form(640, ge=320, le=1280),
-) -> ProcessingResponse:
-    """Process an uploaded video with YOLO detection and tracking."""
+) -> dict:
+    """Accept a video upload and start async processing. Returns a job_id to poll."""
     suffix = Path(video.filename or "upload.mp4").suffix or ".mp4"
-    temp_path: Path | None = None
     output_path = OUTPUT_DIR / f"{uuid4().hex}.mp4"
 
-    try:
-        with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_file.write(await video.read())
-            temp_path = Path(temp_file.name)
+    with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        temp_file.write(await video.read())
+        temp_path = Path(temp_file.name)
 
-        if temp_path.stat().st_size == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Uploaded video file is empty.",
-            )
-
-        settings = ProcessingSettings(
-            confidence_threshold=confidence_threshold,
-            model_name=model_name,
-            device=device,
-            max_fps=max_fps,
-            image_size=image_size,
+    if temp_path.stat().st_size == 0:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded video file is empty.",
         )
 
-        try:
-            result = await run_in_threadpool(process_video, temp_path, settings, output_path=output_path)
-            return result.model_copy(update={
-                "video_name": video.filename or temp_path.name,
-                "annotated_video_url": f"/media/{output_path.name}",
-            })
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        except Exception as exc:  # pragma: no cover - protects the API boundary.
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Video processing failed: {exc}",
-            ) from exc
-    finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink(missing_ok=True)
+    settings = ProcessingSettings(
+        confidence_threshold=confidence_threshold,
+        model_name=model_name,
+        device=device,
+        max_fps=max_fps,
+        image_size=image_size,
+    )
+
+    job_id = uuid4().hex
+    _jobs[job_id] = {
+        "status": "queued",
+        "created_at": datetime.now(timezone.utc),
+        "result": None,
+        "error": None,
+    }
+    background_tasks.add_task(
+        _run_job, job_id, temp_path, settings, output_path, video.filename or temp_path.name
+    )
+    return {"job_id": job_id}
+
+
+@app.get("/api/v1/jobs/{job_id}", tags=["perception"])
+async def get_job_status(job_id: str) -> dict:
+    """Poll the status of a submitted processing job."""
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
