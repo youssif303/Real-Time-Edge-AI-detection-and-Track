@@ -162,10 +162,15 @@ def process_video(
         frames: list[FrameSummary] = []
         writer: Any | None = None
         raw_frame_index = 0
+        # Hard cap: never process more than 60 frames to stay within Render's 512 MB.
+        MAX_FRAMES = 60
 
         while True:
             ok, frame = capture.read()
             if not ok:
+                break
+
+            if len(frames) >= MAX_FRAMES:
                 break
 
             if raw_frame_index % frame_stride != 0:
