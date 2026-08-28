@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -28,7 +28,8 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 OUTPUT_RETENTION = timedelta(hours=2)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=OUTPUT_DIR), name="media")
-cors_origins = [origin.strip() for origin in os.getenv("EDGETRACK_CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()]
+configured_origins = [origin.strip() for origin in os.getenv("EDGETRACK_CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()]
+cors_origins = [*configured_origins, "https://edgetrack-nu.vercel.app"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
