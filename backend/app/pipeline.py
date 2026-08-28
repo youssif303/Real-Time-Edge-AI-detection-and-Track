@@ -6,6 +6,9 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import subprocess
+from imageio_ffmpeg import get_ffmpeg_exe
+
 import cv2
 from pydantic import BaseModel, Field
 
@@ -166,7 +169,7 @@ def process_video(
                     output_fps = effective_max_fps or source_fps or 30.0
                     writer = cv2.VideoWriter(
                         str(output_path),
-                        cv2.VideoWriter_fourcc(*"avc1"),
+                        cv2.VideoWriter_fourcc(*"mp4v"),
                         output_fps,
                         (width, height),
                     )
