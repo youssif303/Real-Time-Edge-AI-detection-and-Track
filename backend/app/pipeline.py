@@ -60,7 +60,7 @@ class ProcessingSettings:
     image_size: int = 640
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=1)
 def load_yolo_model(model_name: str) -> Any:
     from ultralytics import YOLO
 

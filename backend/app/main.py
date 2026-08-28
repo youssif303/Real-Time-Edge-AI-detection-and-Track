@@ -28,15 +28,13 @@ JOB_RETENTION = timedelta(hours=2)
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Pre-load default YOLO models at startup so the first request is fast."""
+    """Pre-load the default YOLO model at startup so the first request is fast."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for model_name in ("yolov8n.pt", "yolov8s.pt"):
-        try:
-            await run_in_threadpool(load_yolo_model, model_name)
-        except Exception:
-            pass  # Non-fatal: model will download on first use if this fails.
+    try:
+        await run_in_threadpool(load_yolo_model, "yolov8n.pt")
+    except Exception:
+        pass  # Non-fatal: model will download on first use if this fails.
     yield
-    # Nothing to tear down.
 
 
 app = FastAPI(
