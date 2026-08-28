@@ -153,7 +153,15 @@ def process_video(
 
             if raw_frame_index % frame_stride != 0:
                 raw_frame_index += 1
+                del frame
                 continue
+
+            # Pre-resize to YOLO's input size before inference so the large original
+            # frame buffer is released immediately and result.plot() returns a small image.
+            h_f, w_f = frame.shape[:2]
+            if max(h_f, w_f) > settings.image_size:
+                scale = settings.image_size / max(h_f, w_f)
+                frame = cv2.resize(frame, (int(w_f * scale), int(h_f * scale)))
 
             frame_start = perf_counter()
             results = model.track(
@@ -166,16 +174,19 @@ def process_video(
                 imgsz=settings.image_size
             )
             inference_ms = (perf_counter() - frame_start) * 1000.0
+            del frame  # Release frame buffer before annotation/GC
 
             result = results[0] if isinstance(results, list) and results else results
             detections = _extract_detections(result)
             if output_path is not None:
                 # Save as JPEG — no VideoWriter buffer, no codec encoding overhead.
-                annotated_frame = result.plot() if hasattr(result, "plot") else frame
-                ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-                if ok_jpg:
-                    last_annotated = jpg_buf.tobytes()
-                del annotated_frame, jpg_buf
+                annotated_frame = result.plot() if hasattr(result, "plot") else None
+                if annotated_frame is not None:
+                    ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    if ok_jpg:
+                        last_annotated = jpg_buf.tobytes()
+                    del jpg_buf
+                del annotated_frame
             del results, result
             gc.collect()
             active_track_count = len({det.track_id for det in detections if det.track_id is not None})
