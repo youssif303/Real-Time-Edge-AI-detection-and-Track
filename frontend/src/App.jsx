@@ -22,7 +22,7 @@ function App() {
   const [device, setDevice] = useState("cpu");
   const [gpuAvailable, setGpuAvailable] = useState(true);
   const [maxFps, setMaxFps] = useState(5);
-  const [imageSize, setImageSize] = useState(640);
+  const [imageSize, setImageSize] = useState(320);
   const [result, setResult] = useState(null);
   // status: "idle" | "uploading" | "queued" | "processing" | "complete" | "error"
   const [status, setStatus] = useState("idle");
@@ -175,6 +175,7 @@ function App() {
       <section className="workspace">
         <div className="control-panel">
           <div className="section-heading"><span>01 / INPUT</span><span>MP4 · MOV · AVI</span></div>
+          <p className="muted" style={{fontSize:"0.75rem",marginBottom:"0.5rem"}}>⚡ Free-tier demo — processes up to 15 frames. Use a short clip (under 30s) for best results.</p>
           <button className={`dropzone ${file ? "has-file" : ""}`} onClick={() => inputRef.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const dropped = e.dataTransfer.files?.[0]; if (dropped?.type.startsWith("video/")) { if (dropped.size > 100 * 1024 * 1024) { setError("File is too large (max 100 MB)."); return; } setFile(dropped); setResult(null); setError(""); } }}>
             <input ref={inputRef} type="file" accept="video/*" onChange={chooseFile} />
             <span className="upload-icon">↑</span>

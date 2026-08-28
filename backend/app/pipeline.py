@@ -162,8 +162,9 @@ def process_video(
         frames: list[FrameSummary] = []
         writer: Any | None = None
         raw_frame_index = 0
-        # Hard cap: never process more than 60 frames to stay within Render's 512 MB.
-        MAX_FRAMES = 60
+        # Hard cap: on the free tier (0.1 vCPU / 512 MB) each frame takes 1–2 s.
+        # 15 frames × 2 s = 30 s max — stays well within the server's compute budget.
+        MAX_FRAMES = 15
 
         while True:
             ok, frame = capture.read()

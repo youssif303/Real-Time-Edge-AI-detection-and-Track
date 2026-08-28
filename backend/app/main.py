@@ -131,7 +131,7 @@ async def submit_video(
     model_name: str = Form("yolov8n.pt"),
     device: str = Form("cpu"),
     max_fps: int | None = Form(None, ge=1),
-    image_size: int = Form(416, ge=320, le=1280),
+    image_size: int = Form(320, ge=320, le=1280),
 ) -> dict:
     """Accept a video upload and start async processing. Returns a job_id to poll."""
     suffix = Path(video.filename or "upload.mp4").suffix or ".mp4"
