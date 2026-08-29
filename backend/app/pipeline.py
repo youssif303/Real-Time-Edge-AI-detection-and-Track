@@ -181,12 +181,12 @@ def process_video(
             if output_path is not None:
                 annotated_frame = result.plot() if hasattr(result, "plot") else None
                 if annotated_frame is not None:
-                ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if ok_jpg:
-                    jpg_bytes = jpg_buf.tobytes()
-                    frame_jpegs.append(jpg_bytes)
-                    last_annotated = jpg_bytes  # Keep last for thumbnail fallback
-                del jpg_buf
+                    ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if ok_jpg:
+                        jpg_bytes = jpg_buf.tobytes()
+                        frame_jpegs.append(jpg_bytes)
+                        last_annotated = jpg_bytes
+                    del jpg_buf
                 del annotated_frame
             del results, result
             gc.collect()
