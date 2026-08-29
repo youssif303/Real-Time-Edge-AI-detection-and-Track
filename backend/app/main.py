@@ -66,9 +66,12 @@ def _cleanup_jobs() -> None:
 def cleanup_old_outputs() -> None:
     cutoff = datetime.now(timezone.utc) - OUTPUT_RETENTION
     for output_path in list(OUTPUT_DIR.glob("*.mp4")) + list(OUTPUT_DIR.glob("*.jpg")) + list(OUTPUT_DIR.glob("*.json")):
-        modified = datetime.fromtimestamp(output_path.stat().st_mtime, tz=timezone.utc)
-        if modified < cutoff:
-            output_path.unlink(missing_ok=True)
+        try:
+            modified = datetime.fromtimestamp(output_path.stat().st_mtime, tz=timezone.utc)
+            if modified < cutoff:
+                output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 @app.get("/health", tags=["system"])

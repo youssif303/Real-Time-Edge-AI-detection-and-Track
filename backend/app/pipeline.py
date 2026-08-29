@@ -48,6 +48,7 @@ class ProcessingResponse(BaseModel):
     measured_fps: float | None = None
     annotated_video_url: str | None = None
     preview_image_url: str | None = None
+    frame_image_urls: list[str] | None = None
     frames: list[FrameSummary]
 
 
@@ -137,9 +138,9 @@ def process_video(
             model = load_yolo_model(settings.model_name)
 
         frames: list[FrameSummary] = []
-        writer: cv2.VideoWriter | None = None
         raw_frame_index = 0
-        last_annotated: bytes | None = None  # JPEG of the last annotated frame (thumbnail)
+        last_annotated: bytes | None = None
+        frame_jpegs: list[bytes] = []  # In-memory JPEG bytes per frame (tiny at ~320px)
         MAX_FRAMES = 5
 
         while True:
@@ -180,25 +181,13 @@ def process_video(
             if output_path is not None:
                 annotated_frame = result.plot() if hasattr(result, "plot") else None
                 if annotated_frame is not None:
-                    # VideoWriter — safe because frames are already pre-resized to ~320px
-                    if writer is None:
-                        h_a, w_a = annotated_frame.shape[:2]
-                        out_fps = effective_max_fps or source_fps or 2.0
-                        writer = cv2.VideoWriter(
-                            str(output_path),
-                            cv2.VideoWriter_fourcc(*"avc1"),
-                            out_fps,
-                            (w_a, h_a),
-                        )
-                        if not writer.isOpened():
-                            writer = None  # Skip video; JPEG thumbnail still available
-                    if writer is not None:
-                        writer.write(annotated_frame)
-                    # Keep last frame as JPEG thumbnail
-                    ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    if ok_jpg:
-                        last_annotated = jpg_buf.tobytes()
-                    del jpg_buf, annotated_frame
+                ok_jpg, jpg_buf = cv2.imencode(".jpg", annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ok_jpg:
+                    jpg_bytes = jpg_buf.tobytes()
+                    frame_jpegs.append(jpg_bytes)
+                    last_annotated = jpg_bytes  # Keep last for thumbnail fallback
+                del jpg_buf
+                del annotated_frame
             del results, result
             gc.collect()
             active_track_count = len({det.track_id for det in detections if det.track_id is not None})
@@ -222,16 +211,20 @@ def process_video(
         processing_time_ms = (perf_counter() - processing_started) * 1000.0
         measured_fps = len(frames) / (processing_time_ms / 1000.0) if processing_time_ms > 0.0 else 0.0
 
-        # Flush & close the video writer before writing the JPEG thumbnail.
-        if writer is not None:
-            writer.release()
-            writer = None
-
-        # Write the last annotated frame as a JPEG thumbnail.
+        # Write per-frame JPEG files to disk (no codec, no subprocess, browser-displayable).
+        frame_image_urls: list[str] | None = None
         preview_path: Path | None = None
-        if output_path is not None and last_annotated is not None:
+        if output_path is not None and frame_jpegs:
+            stem = output_path.stem
+            frame_image_urls = []
+            for idx, jpg_bytes in enumerate(frame_jpegs):
+                fpath = output_path.parent / f"{stem}_f{idx:02d}.jpg"
+                fpath.write_bytes(jpg_bytes)
+                frame_image_urls.append(f"/media/{fpath.name}")
+            # Write last frame as thumbnail preview
             preview_path = output_path.with_suffix(".jpg")
-            preview_path.write_bytes(last_annotated)
+            preview_path.write_bytes(frame_jpegs[-1])
+        frame_jpegs.clear()
         last_annotated = None
 
         return ProcessingResponse(
@@ -244,11 +237,10 @@ def process_video(
             processed_frame_count=len(frames),
             processing_time_ms=processing_time_ms,
             measured_fps=measured_fps,
-            annotated_video_url=f"/media/{output_path.name}" if (output_path and output_path.exists() and output_path.stat().st_size > 0) else None,
+            annotated_video_url=None,
             preview_image_url=f"/media/{preview_path.name}" if preview_path else None,
+            frame_image_urls=frame_image_urls,
             frames=frames,
         )
     finally:
-        if writer is not None:
-            writer.release()
         capture.release()

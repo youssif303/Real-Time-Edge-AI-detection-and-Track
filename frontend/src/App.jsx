@@ -45,6 +45,15 @@ function App() {
   const previewImageUrl = result?.preview_image_url
     ? `${API_URL}${result.preview_image_url}`
     : null;
+  const frameImageUrls = (result?.frame_image_urls || []).map(u => `${API_URL}${u}`);
+
+  // Slideshow state — cycles through annotated frames automatically
+  const [slideIdx, setSlideIdx] = useState(0);
+  useEffect(() => {
+    if (frameImageUrls.length <= 1) return;
+    const id = setInterval(() => setSlideIdx(i => (i + 1) % frameImageUrls.length), 800);
+    return () => clearInterval(id);
+  }, [frameImageUrls.length]);
 
   const latest = result?.frames?.at(-1);
   const averageLatency = useMemo(() => {
@@ -212,7 +221,17 @@ function App() {
             <>
               <div className="result-header"><div><p className="eyebrow">PROCESSED VIDEO</p><h2>{result.video_name}</h2></div><span className="complete-mark">✓</span></div>
               {annotatedVideoUrl && <div className="video-preview"><video controls src={annotatedVideoUrl} /></div>}
-              {!annotatedVideoUrl && previewImageUrl && <div className="video-preview"><img src={previewImageUrl} alt="Last annotated frame" style={{width:"100%",borderRadius:"6px"}} /></div>}
+              {!annotatedVideoUrl && frameImageUrls.length > 0 && (
+                <div className="video-preview" style={{position:"relative",cursor:"pointer"}} onClick={() => setSlideIdx(i => (i + 1) % frameImageUrls.length)}>
+                  <img src={frameImageUrls[slideIdx]} alt={`Frame ${slideIdx + 1}`} style={{width:"100%",borderRadius:"6px",display:"block"}} />
+                  <div style={{position:"absolute",bottom:"8px",right:"10px",background:"rgba(0,0,0,0.55)",color:"#fff",fontSize:"0.72rem",padding:"2px 7px",borderRadius:"4px"}}>
+                    {slideIdx + 1} / {frameImageUrls.length} · click or auto-plays
+                  </div>
+                </div>
+              )}
+              {!annotatedVideoUrl && frameImageUrls.length === 0 && previewImageUrl && (
+                <div className="video-preview"><img src={previewImageUrl} alt="Last annotated frame" style={{width:"100%",borderRadius:"6px"}} /></div>
+              )}
               <div className="metrics-grid">
                 <Metric label="Objects / latest" value={latest?.detections?.length ?? 0} detail="visible detections" />
                 <Metric label="Active tracks" value={latest?.active_track_count ?? 0} detail="stable identities" />
