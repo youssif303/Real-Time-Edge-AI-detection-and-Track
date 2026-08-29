@@ -85,9 +85,17 @@ function App() {
 
   async function processVideo() {
     if (!file) return;
+    stopPolling();
+    setResult(null);          // clear previous results immediately
     setStatus("uploading");
     setError("");
     setElapsedSec(0);
+
+    // Start elapsed timer immediately so "Uploading…" shows live seconds
+    const startTime = Date.now();
+    elapsedRef.current = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
 
     const body = new FormData();
     body.append("video", file);
@@ -108,12 +116,6 @@ function App() {
       setStatus("error");
       return;
     }
-
-    // Start elapsed-seconds ticker
-    const startTime = Date.now();
-    elapsedRef.current = setInterval(() => {
-      setElapsedSec(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
 
     setStatus("queued");
 
@@ -162,10 +164,10 @@ function App() {
   }
 
   const isProcessing = ["uploading", "queued", "processing"].includes(status);
-  const statusLabel = status === "uploading" ? "Uploading…"
-    : status === "queued" ? `Queued — waiting for worker… (${elapsedSec}s)`
+  const statusLabel = status === "uploading"
+    ? (elapsedSec < 15 ? `Uploading… (${elapsedSec}s)` : `Server waking up… (${elapsedSec}s) — free tier needs ~30s`)
+    : status === "queued" ? `Queued… (${elapsedSec}s)`
     : status === "processing" ? `Processing frames… (${elapsedSec}s)`
-    : status === "processing" ? "Processing frames…"
     : "Run perception pass ↗";
 
   return (
